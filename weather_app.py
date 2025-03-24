@@ -13,13 +13,18 @@ import json
 import openmeteo_requests
 from openmeteo_sdk.Variable import Variable
 
-import numpy as np
-
 # Global Variables
 openmeteo = openmeteo_requests.Client()
+
 pred_items = []
 pred_items_verbose = []
+
 latitude, longitude= None, None
+
+labels = []
+symbols = []
+temps = []
+r_probs = []
 
 # Get Current User Location (Warning, using ip, may narrow only to city)
 # Returns latitude, longitude, address
@@ -31,13 +36,20 @@ def get_curr_loc():
         return lat, long, addr
     else:
         return None, None, None
+    
+def add_comma_if_exist(text):
+    if text != '':
+        return text + ", "
 
 # Get the latitude, longitude and address from country json data
 # Returns latitude, longitude and address
 def get_loc_data(country):
     lat = country['latitude']
     long = country['longitude']
-    addr = f"{country['name']} {country.get('country_code', '')}"
+    ad1 = country.get('admin1', '')
+    if ad1 != '':
+        ad1 += ' '
+    addr = f"{country['name']} {ad1}{country.get('country_code', '')}"
     return lat, long, addr
 
 # get the top 5 predicted locations from text in text field
@@ -55,7 +67,7 @@ def get_pred(text):
             data = response.json()
             predictions = data.get("results", [])
             if predictions != []:
-                predictions_readable = [f"{guess['name']}, {guess.get('country', '')}" for guess in predictions]
+                predictions_readable = [f"{guess['name']}, {add_comma_if_exist(guess.get('admin1', ''))}{guess.get('country', '')}" for guess in predictions]
             else:
                 predictions_readable = []
             return predictions_readable, predictions
@@ -116,6 +128,26 @@ def coord_parse(event):
     except:
         location_label.config(text="Invalid Coordinate!")
         
+def display_forcast(daily):
+    
+    weather_codes = daily.Variables(0)
+    temps_max = daily.Variables(1)
+    temps_min = daily.Variables(2)
+    perc_probs = daily.Variables(3)
+    
+    for k in range(1, 6):
+        i = k-1
+        weather_code = int(weather_codes.Values(k))
+        label, symbol = weather_code_translate(weather_code)
+        labels[i].config(text=label)
+        symbols[i].config(text=symbol)
+        
+        temp = f"{round(temps_max.Values(k), 1)} / {round(temps_min.Values(k), 1)}°C"
+        temps[i].config(text=temp)
+        
+        perc_prob = f"precip: {int(perc_probs.Values(k))}%"
+        r_probs[i].config(text=perc_prob)
+        
 def get_weather():
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
@@ -124,7 +156,7 @@ def get_weather():
         "daily": ["weather_code", "temperature_2m_max", "temperature_2m_min", "precipitation_probability_max"],
         "current": ["temperature_2m", "precipitation_probability", "weather_code", "apparent_temperature", "relative_humidity_2m"],
         "timezone": "auto",
-        "forecast_days": 5
+        "forecast_days": 7
     }
     responses = openmeteo.weather_api(url, params=params)
     response = responses[0]
@@ -153,8 +185,10 @@ def get_weather():
     rain_chance.config(text=f"Chance of Rain: {curr_prec_prob}%")
     
     humidity.config(text=f"Humidity: {curr_relative_humidity}%")
-
-    pass
+        
+    daily = response.Daily()
+    
+    display_forcast(daily)
 
 def weather_code_translate(code):
     match code:
@@ -216,6 +250,8 @@ def weather_code_translate(code):
             return "Thunderstorm with heavy hail", "⛈️"
         case _:
             return "unknown", "🤷‍♂️"
+        
+
 
 
 # Find current coordinate and Location
@@ -276,6 +312,26 @@ rain_chance.grid(row=10, column=0, columnspan=2)
 
 humidity = tk.Label(root, text="")
 humidity.grid(row=10, column=3, columnspan=2)
+
+separator_2 = ttk.Separator(root, orient='horizontal')
+separator_2.grid(row=11, columnspan=5, sticky="ew")
+
+forcast_label = tk.Label(root, text="5-Day Forecast")
+forcast_label.grid(row=12, columnspan=5)
+
+for i in range(5):
+    label = tk.Label(root, text="")
+    label.grid(row=13, column=i)
+    symbol = tk.Label(root, text="", font=("Segoe UI Emoji", 20))
+    symbol.grid(row=14, column=i)
+    temp = tk.Label(root, text="")
+    temp.grid(row=15, column=i)
+    r_prob = tk.Label(root, text="")
+    r_prob.grid(row=16, column=i)
+    labels.append(label)
+    symbols.append(symbol)
+    temps.append(temp)
+    r_probs.append(r_prob)
 
 root.eval('tk::PlaceWindow . center')
 
