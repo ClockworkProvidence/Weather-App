@@ -3,7 +3,13 @@
 
 import tkinter as tk
 from tkinter import ttk
+from tkinter import messagebox 
+from tkinter.ttk import *
 from tkinter import *
+
+import tkcalendar
+from datetime import datetime
+from datetime import timedelta
 
 import geocoder
 
@@ -12,6 +18,8 @@ import json
 
 import openmeteo_requests
 from openmeteo_sdk.Variable import Variable
+
+import sqlite3
 
 # Global Variables
 openmeteo = openmeteo_requests.Client()
@@ -26,6 +34,40 @@ symbols = []
 temps = []
 r_probs = []
 
+# database attr
+Curr_loc = None
+
+Loc = None
+Dates = []
+Code = None
+Temp = None
+Ap_temp = None
+R_prob = None
+Humid = None
+
+connection = sqlite3.connect('weather_database.db')
+
+cursor = connection.cursor()
+
+create_table_query = '''
+                        CREATE TABLE IF NOT EXISTS Weather (
+                            location TEXT NOT NULL,
+                            date TEXT NOT NULL,
+                            weather_code INTEGER NOT NULL,
+                            temperature REAL,
+                            apparent_temperature REAL,
+                            rain_prob INTEGER,
+                            humidity INTEGER,
+                            PRIMARY KEY (location, date)
+                        );
+                     '''
+
+# Execute the SQL command
+cursor.execute(create_table_query)
+
+# Commit the changes
+connection.commit()
+
 # Get Current User Location (Warning, using ip, may narrow only to city)
 # Returns latitude, longitude, address
 def get_curr_loc():
@@ -39,7 +81,8 @@ def get_curr_loc():
     
 def add_comma_if_exist(text):
     if text != '':
-        return text + ", "
+        text += ", "
+    return text
 
 # Get the latitude, longitude and address from country json data
 # Returns latitude, longitude and address
@@ -76,26 +119,26 @@ def get_pred(text):
             return None, None
 
 # Update the listbox we use for prediction displays
-def update_pred(lst):
+def update_pred(lst, preds):
     # clear previous data 
-    pred_lst.delete(0, 'end') 
+    preds.delete(0, 'end') 
    
     # put new data 
     for item in lst: 
-        pred_lst.insert('end', item) 
+        preds.insert('end', item) 
 
 # Set the entry box text to the selected name in the listbox
-def set_loc_text(text):
-    location_entry.delete(0,END)
-    location_entry.insert(0,text)
+def set_loc_text(text, entry, lst):
+    entry.delete(0,END)
+    entry.insert(0,text)
     pred_items.clear()
     pred_items_verbose.clear()
-    update_pred(pred_items)
+    update_pred(pred_items, lst)
     return
         
 # Event handler for when a name in the list box is selected
 def select_pred(event):
-    global latitude, longitude
+    global latitude, longitude, Curr_loc
     
     if not event.widget.curselection():
         return
@@ -103,7 +146,8 @@ def select_pred(event):
     country = pred_items_verbose[ind]
     latitude, longitude, address = get_loc_data(country)
     print(latitude, longitude)
-    set_loc_text(pred_items[ind])
+    Curr_loc = address
+    set_loc_text(pred_items[ind], location_entry, pred_lst)
     location_label.config(text=f"Finding Weather for: {address}")
 
 # Event handler for search mode, calls geocoding API
@@ -112,7 +156,7 @@ def pred(event):
         return
     txt = event.widget.get()
     pred_items[:], pred_items_verbose[:] = get_pred(txt)
-    update_pred(pred_items)
+    update_pred(pred_items, pred_lst)
 
 # Event handler for coordinate mode, parses input for coordinate
 def coord_parse(event):
@@ -156,7 +200,7 @@ def get_weather():
         "daily": ["weather_code", "temperature_2m_max", "temperature_2m_min", "precipitation_probability_max"],
         "current": ["temperature_2m", "precipitation_probability", "weather_code", "apparent_temperature", "relative_humidity_2m"],
         "timezone": "auto",
-        "forecast_days": 7
+        "forecast_days": 6
     }
     responses = openmeteo.weather_api(url, params=params)
     response = responses[0]
@@ -189,8 +233,12 @@ def get_weather():
     daily = response.Daily()
     
     display_forcast(daily)
+    
+    create_in_db_curr(datetime.today().strftime('%Y-%m-%d'), curr_weather_code, curr_temp, \
+                      curr_apparent_temp, curr_prec_prob, curr_relative_humidity)
 
 def weather_code_translate(code):
+
     match code:
         case 0:
             return "Clear sky", "☀️"
@@ -251,15 +299,250 @@ def weather_code_translate(code):
         case _:
             return "unknown", "🤷‍♂️"
         
+def info_msg():
+    messagebox.showinfo("Info", "The Product Manager Accelerator Program is designed to support PM professionals " + \
+                                "through every stage of their careers. From students looking for entry-level jobs to Directors " + \
+                                "looking to take on a leadership role, our program has helped over hundreds of students fulfill " + \
+                                "their career aspirations." + \
+                                "\n\n" + \
+                                "Our Product Manager Accelerator community are ambitious and committed. Through our program " + \
+                                "they have learnt, honed and developed new PM and leadership skills, giving them a strong " + \
+                                "foundation for their future endeavors.")
+    
+def create_in_db_curr(date, code, temp, ap_temp, r_prob, humid):
+    global Curr_loc
+    
+    insert_query = '''
+                   INSERT OR IGNORE INTO Weather (location,
+                   date, weather_code, temperature, 
+                   apparent_temperature, rain_prob, humidity) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?);
+                   '''
+                   
+    weather_data = (Curr_loc, str(date), code, temp, ap_temp, r_prob, humid)
+    cursor.execute(insert_query, weather_data)
+    connection.commit()
+    
+    
 
+# ---------------------------- for CRUD --------------------------------------
 
+# Event handler for when a name in the list box is selected
+def crud_select_pred(event, crud_loc, crud_p_lst, alert):
+    global Loc
+    
+    if not event.widget.curselection():
+        return
+    ind = event.widget.curselection()[0]
+    country = pred_items_verbose[ind]
+    _, _, address = get_loc_data(country)
+    Loc = address
+    set_loc_text(pred_items[ind], crud_loc, crud_p_lst)
+    alert.config(text=f"Entered Location: {address}")
+
+# Event handler for search mode, calls geocoding API
+def crud_pred(event, crud_p_lst):
+    if not event.widget.get() or var1.get():
+        return
+    txt = event.widget.get()
+    pred_items[:], pred_items_verbose[:] = get_pred(txt)
+    update_pred(pred_items, crud_p_lst)
+    
+def date_range(start, stop, alert):
+    global Dates # Should default to []
+    
+    Dates = []
+    diff = (stop-start).days
+    for i in range(diff+1):
+        day = start + timedelta(days=i)
+        Dates.append(day)
+    if Dates:
+        alert.config(text=f"Entering {len(Dates)}days of Data")
+    else:
+        alert.config(text="Check if end date is later than start date")
+        
+def entry_handling(event, alert):
+    global Code, Temp, Ap_temp, R_prob, Humid
+    if not event.widget.get():
+        return
+    txt = event.widget.get()
+    try:
+        txt = float(txt)
+    except ValueError:
+        alert.config(text=f"Entered: {txt}, this is not valid, please enter a number")
+        return
+    
+    name = event.widget.extra
+    match name:
+        case "Weather Code":
+            txt = int(txt)
+            if (txt < 0) or (txt > 99):
+                alert.config(text=f"Weather code can only be between 0-99")
+            else:
+                Code = txt
+                alert.config(text=f"Entered: {txt} for weather code")
+        case "Temperature":
+            Temp = txt
+            alert.config(text=f"Entered: {txt} for temperature")
+        case "Apparent Temperature":
+            Ap_temp = txt
+            alert.config(text=f"Entered: {txt} for apparent temperature")
+        case "Rain_chance":
+            txt = int(txt)
+            R_prob = txt
+            alert.config(text=f"Entered: {txt} for rain chance")
+        case "Humidity":
+            txt = int(txt)
+            Humid = txt
+            alert.config(text=f"Entered: {txt} for humidity")
+        case _:
+            pass
+        
+def create_in_db(alert):
+    global Loc, Dates, Code, Temp, Ap_temp, R_prob, Humid
+    
+    if Loc and Dates and Code:
+        
+        insert_query = '''
+                       INSERT OR IGNORE INTO Weather (location,
+                       date, weather_code, temperature, 
+                       apparent_temperature, rain_prob, humidity) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?);
+                       '''
+                       
+        for date in Dates:
+            weather_data = (Loc, str(date), Code, Temp, Ap_temp, R_prob, Humid)
+            cursor.execute(insert_query, weather_data)
+            connection.commit()
+        
+        Dates = []
+        Loc, Code, Temp, Ap_temp, R_prob, Humid = None
+        
+    else:
+        alert.config(text=f"Data missing, at least enter lcation, dates and weather code")
+    
+
+def open_C_window():
+     
+    # Toplevel object which will 
+    # be treated as a new window
+    c_win = Toplevel(root)
+    
+    c_win.geometry(f"+{root.winfo_x()}+{root.winfo_y()}")
+ 
+    # sets the title of the
+    # Toplevel widget
+    c_win.title("Create Records")
+ 
+    # A Label widget to show in toplevel
+    record_label = Label(c_win, text ="Create Records")
+    record_label.grid(row=0, columnspan=3)
+    
+    c_label_1 = tk.Label(c_win, text="Location:")
+    c_label_1.grid(row=1, column=0)
+    c_location = tk.Entry(c_win, width=35)
+    c_location.grid(row=1, column=1, columnspan=3)
+    
+    c_p_lst = Listbox(c_win, width=35, height=5, selectmode="single")
+    c_p_lst.grid(row=2, column=1, columnspan=3)
+    
+    c_location.bind('<KeyRelease>', lambda event: crud_pred(event, c_p_lst))
+    c_p_lst.bind("<<ListboxSelect>>", lambda event: crud_select_pred(event, c_location, c_p_lst, c_alert))
+    
+    c_separator_1 = ttk.Separator(c_win, orient='horizontal')
+    c_separator_1.grid(row=3, columnspan=4, sticky="ew")
+    
+    c_date1 = tkcalendar.DateEntry(c_win)
+    c_date1.grid(row=4, column=0, columnspan=2)
+
+    c_date2 = tkcalendar.DateEntry(c_win)
+    c_date2.grid(row=4, column=2, columnspan=2)
+
+    c_date_but = Button(c_win, text='Find range', command=lambda: date_range(c_date1.get_date(), c_date2.get_date(), c_alert))
+    c_date_but.grid(row=5, columnspan=4)
+    
+    c_label_texts = ["Weather Code", "Temperature", "Apparent Temperature", "Rain_chance", "Humidity"]
+    c_labels = []
+    c_entries = []
+    
+    for i in range(5):
+        txt = c_label_texts[i][:]
+        c_label = tk.Label(c_win, text=txt + ':')
+        c_label.grid(row=6 + i, column=0)
+        c_labels.append(c_label)
+        
+        c_entry = tk.Entry(c_win, width=35)
+        c_entry.bind('<Return>', lambda event: entry_handling(event, c_alert))
+        c_entry.extra = txt
+        c_entry.grid(row=6 + i, column=1, columnspan=3)
+        c_entries.append(c_entries)
+        
+    c_alert = tk.Label(c_win, text="")
+    c_alert.grid(row=11, columnspan=4)
+    
+    c_enter_but = Button(c_win, text='Enter Data', command=lambda: create_in_db(c_alert))
+    c_enter_but.grid(row=12, columnspan=4)
+    
+    c_win.mainloop()
+    
+def open_R_window():
+     
+    # Toplevel object which will 
+    # be treated as a new window
+    r_win = Toplevel(root)
+    
+    r_win.geometry(f"+{root.winfo_x()}+{root.winfo_y()}")
+ 
+    # sets the title of the
+    # Toplevel widget
+    r_win.title("Read Records")
+ 
+    # A Label widget to show in toplevel
+    record_label = Label(r_win, text ="Read Records")
+    record_label.grid(row=0, columnspan=3)
+    
+    r_label_1 = tk.Label(r_win, text="Location:")
+    r_label_1.grid(row=1, column=0)
+    r_location = tk.Entry(r_win, width=35)
+    r_location.grid(row=1, column=1, columnspan=3)
+    
+    r_p_lst = Listbox(r_win, width=35, height=5, selectmode="single")
+    r_p_lst.grid(row=2, column=1, columnspan=3)
+    
+    r_location.bind('<KeyRelease>', lambda event: crud_pred(event, r_p_lst))
+    r_p_lst.bind("<<ListboxSelect>>", lambda event: crud_select_pred(event, r_location, r_p_lst, r_alert))
+    
+    r_separator_1 = ttk.Separator(r_win, orient='horizontal')
+    r_separator_1.grid(row=3, columnspan=4, sticky="ew")
+    
+    r_date1 = tkcalendar.DateEntry(r_win)
+    r_date1.grid(row=4, column=0, columnspan=2)
+    
+    r_alert = tk.Label(r_win, text="")
+    r_alert.grid(row=5, columnspan=4)
 
 # Find current coordinate and Location
 latitude, longitude, address = get_curr_loc()
 
 # Create the main window
 root = tk.Tk()
-root.title("Weather App")
+root.title("Weather App - Steven Wang")
+
+menu_bar = Menu(root)
+
+root.config(menu=menu_bar) 
+
+records = Menu(menu_bar) 
+menu_bar.add_cascade(label='Records', menu=records)
+records.add_command(label ='Create Records', command = open_C_window)
+records.add_command(label ='Read Records', command = open_R_window)
+records.add_command(label ='Update Records', command = None)
+records.add_command(label ='Delete Records', command = None)
+
+records.add_command(label ='Export Records', command = None)
+
+info = Menu(menu_bar)
+menu_bar.add_command(label ="Info", command = info_msg)
 
 # Create label and entry field
 location_label = tk.Label(root, text="Location:")
