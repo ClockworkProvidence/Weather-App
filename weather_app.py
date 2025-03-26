@@ -34,10 +34,13 @@ symbols = []
 temps = []
 r_probs = []
 
+Curr_win = None
+
 # database attr
 Curr_loc = None
 
 Loc = None
+Date = None
 Dates = []
 Code = None
 Temp = None
@@ -361,6 +364,12 @@ def date_range(start, stop, alert):
     else:
         alert.config(text="Check if end date is later than start date")
         
+def date_entry_handling(event, alert):
+    global Date
+    date = event.widget.get_date()
+    Date = date
+    alert.config(text=f"Entered: {date} for date")
+        
 def entry_handling(event, alert):
     global Code, Temp, Ap_temp, R_prob, Humid
     if not event.widget.get():
@@ -416,17 +425,117 @@ def create_in_db(alert):
             connection.commit()
         
         Dates = []
-        Loc, Code, Temp, Ap_temp, R_prob, Humid = None
+        Loc, Code, Temp, Ap_temp, R_prob, Humid = None, None, None, None, None, None
         
     else:
-        alert.config(text=f"Data missing, at least enter lcation, dates and weather code")
+        alert.config(text=f"Data missing, at least enter location, dates and weather code")
+        
+def add_name_if_exist(data, name):
+    data = str(data)
+    if data:
+        return f"{name}: {data} \n"
+    else:
+        return ''
+        
+def read_in_db(alert, r_msg):
+    global Loc, Date
     
+    if Loc and Date:
+        
+        read_query = "SELECT * FROM Weather WHERE location = ? AND date = ?;"
+        weather_data = (Loc, str(Date))
+        cursor.execute(read_query, weather_data)
+        connection.commit()
+        records = cursor.fetchall()
+        if records != []:
+            record = records[0]
+            txt = f"{add_name_if_exist(record[0], 'Location')}\
+                    {add_name_if_exist(record[1], 'Date')}\
+                    {add_name_if_exist(record[2], 'Weather code')}\
+                    {add_name_if_exist(record[3], 'Temperature')}\
+                    {add_name_if_exist(record[4], 'Apparent temperature')}\
+                    {add_name_if_exist(record[5], 'Rain probability')}\
+                    {add_name_if_exist(record[6], 'Humidity')}"
+            r_msg.config(text=txt)
+        else:
+            alert.config(text="Could not find data")
+        Loc = None
+        Date = None
+        
+    else:
+        alert.config(text="Data missing, at least enter location and date")
+        
+def update_in_db(alert):
+    global Loc, Date, Code, Temp, Ap_temp, R_prob, Humid
+    
+    if Loc and Date and Code:
+        
+        read_query = "SELECT * FROM Weather WHERE location = ? AND date = ?;"
+        weather_data = (Loc, str(Date))
+        cursor.execute(read_query, weather_data)
+        connection.commit()
+        records = cursor.fetchall()
+        if records != []:
+            update_query = '''
+                           UPDATE Weather
+                           SET weather_code = ?, temperature = ?, 
+                           apparent_temperature = ?, rain_prob = ?, humidity = ?
+                           WHERE location = ? AND date = ?;
+                           '''
+                       
+            weather_data = (Code, Temp, Ap_temp, R_prob, Humid, Loc, str(Date))
+            cursor.execute(update_query, weather_data)
+            connection.commit()
+            
+            alert.config(text=f"Data at {Loc}, {Date} has been Updated")
+            
+            Loc, Date, Code, Temp, Ap_temp, R_prob, Humid = None, None, None, None, None, None, None
+        else:
+            alert.config(text="Could not find data")
+        
+    else:
+        alert.config(text=f"Data missing, at least enter location, dates and weather code")
+
+def delete_in_db(alert):
+    global Loc, Date
+    
+    if Loc and Date:
+        read_query = "SELECT * FROM Weather WHERE location = ? AND date = ?;"
+        weather_data = (Loc, str(Date))
+        cursor.execute(read_query, weather_data)
+        connection.commit()
+        records = cursor.fetchall()
+        if records != []:
+            delete_query = "DELETE FROM Weather WHERE location = ? AND date = ?;"
+            weather_data = (Loc, str(Date))
+            cursor.execute(delete_query, weather_data)
+            connection.commit()
+            alert.config(text=f"Data at {Loc}, {Date} has been deleted")
+            Loc = None
+            Date = None
+        else:
+            alert.config(text="Could not find data")
+        
+        
+    else:
+        alert.config(text="Data missing, at least enter location and date")
+    
+def destroy_win():
+    global Curr_win
+    if Curr_win:
+        Curr_win.destroy()
+    Curr_win = None
 
 def open_C_window():
+    global Curr_win
+    
+    destroy_win()
      
     # Toplevel object which will 
     # be treated as a new window
     c_win = Toplevel(root)
+    
+    Curr_win = c_win
     
     c_win.geometry(f"+{root.winfo_x()}+{root.winfo_y()}")
  
@@ -486,10 +595,15 @@ def open_C_window():
     c_win.mainloop()
     
 def open_R_window():
-     
+    
+    global Curr_win
+    
+    destroy_win()
     # Toplevel object which will 
     # be treated as a new window
     r_win = Toplevel(root)
+    
+    Curr_win = r_win
     
     r_win.geometry(f"+{root.winfo_x()}+{root.winfo_y()}")
  
@@ -515,12 +629,130 @@ def open_R_window():
     r_separator_1 = ttk.Separator(r_win, orient='horizontal')
     r_separator_1.grid(row=3, columnspan=4, sticky="ew")
     
-    r_date1 = tkcalendar.DateEntry(r_win)
-    r_date1.grid(row=4, column=0, columnspan=2)
+    r_date = tkcalendar.DateEntry(r_win)
+    r_date.bind("<<DateEntrySelected>>", lambda event: date_entry_handling(event, r_alert))
+    r_date.grid(row=5, columnspan=4)
     
     r_alert = tk.Label(r_win, text="")
-    r_alert.grid(row=5, columnspan=4)
+    r_alert.grid(row=6, columnspan=4)
+    
+    r_enter_but = Button(r_win, text='Read Data', command=lambda: read_in_db(r_alert, r_message))
+    r_enter_but.grid(row=7, columnspan=4)
+    
+    r_message = Message(r_win, text="", width=300)
+    r_message.grid(row=8, columnspan=4,)
+    
+    r_win.mainloop()
 
+def open_U_window():
+    global Curr_win
+    
+    destroy_win()
+     
+    # Toplevel object which will 
+    # be treated as a new window
+    u_win = Toplevel(root)
+    
+    Curr_win = u_win
+    
+    u_win.geometry(f"+{root.winfo_x()}+{root.winfo_y()}")
+ 
+    # sets the title of the
+    # Toplevel widget
+    u_win.title("Create Records")
+ 
+    # A Label widget to show in toplevel
+    record_label = Label(u_win, text ="Create Records")
+    record_label.grid(row=0, columnspan=3)
+    
+    u_label_1 = tk.Label(u_win, text="Location:")
+    u_label_1.grid(row=1, column=0)
+    u_location = tk.Entry(u_win, width=35)
+    u_location.grid(row=1, column=1, columnspan=3)
+    
+    u_p_lst = Listbox(u_win, width=35, height=5, selectmode="single")
+    u_p_lst.grid(row=2, column=1, columnspan=3)
+    
+    u_location.bind('<KeyRelease>', lambda event: crud_pred(event, u_p_lst))
+    u_p_lst.bind("<<ListboxSelect>>", lambda event: crud_select_pred(event, u_location, u_p_lst, u_alert))
+    
+    u_separator_1 = ttk.Separator(u_win, orient='horizontal')
+    u_separator_1.grid(row=3, columnspan=4, sticky="ew")
+    
+    u_date = tkcalendar.DateEntry(u_win)
+    u_date.bind("<<DateEntrySelected>>", lambda event: date_entry_handling(event, u_alert))
+    u_date.grid(row=4, columnspan=4)
+    
+    u_label_texts = ["Weather Code", "Temperature", "Apparent Temperature", "Rain_chance", "Humidity"]
+    u_labels = []
+    u_entries = []
+    
+    for i in range(5):
+        txt = u_label_texts[i][:]
+        u_label = tk.Label(u_win, text=txt + ':')
+        u_label.grid(row=5 + i, column=0)
+        u_labels.append(u_label)
+        
+        u_entry = tk.Entry(u_win, width=35)
+        u_entry.bind('<Return>', lambda event: entry_handling(event, u_alert))
+        u_entry.extra = txt
+        u_entry.grid(row=5 + i, column=1, columnspan=3)
+        u_entries.append(u_entries)
+        
+    u_alert = tk.Label(u_win, text="")
+    u_alert.grid(row=10, columnspan=4)
+    
+    u_enter_but = Button(u_win, text='Update Data', command=lambda: update_in_db(u_alert))
+    u_enter_but.grid(row=11, columnspan=4)
+    
+    u_win.mainloop()
+
+def open_D_window():
+    global Curr_win
+    
+    destroy_win()
+    # Toplevel object which will 
+    # be treated as a new window
+    d_win = Toplevel(root)
+    
+    Curr_win = d_win
+    
+    d_win.geometry(f"+{root.winfo_x()}+{root.winfo_y()}")
+ 
+    # sets the title of the
+    # Toplevel widget
+    d_win.title("Delete Records")
+ 
+    # A Label widget to show in toplevel
+    record_label = Label(d_win, text ="Delete Records")
+    record_label.grid(row=0, columnspan=3)
+    
+    d_label_1 = tk.Label(d_win, text="Location:")
+    d_label_1.grid(row=1, column=0)
+    d_location = tk.Entry(d_win, width=35)
+    d_location.grid(row=1, column=1, columnspan=3)
+    
+    d_p_lst = Listbox(d_win, width=35, height=5, selectmode="single")
+    d_p_lst.grid(row=2, column=1, columnspan=3)
+    
+    d_location.bind('<KeyRelease>', lambda event: crud_pred(event, d_p_lst))
+    d_p_lst.bind("<<ListboxSelect>>", lambda event: crud_select_pred(event, d_location, d_p_lst, d_alert))
+    
+    d_separator_1 = ttk.Separator(d_win, orient='horizontal')
+    d_separator_1.grid(row=3, columnspan=4, sticky="ew")
+    
+    d_date = tkcalendar.DateEntry(d_win)
+    d_date.bind("<<DateEntrySelected>>", lambda event: date_entry_handling(event, d_alert))
+    d_date.grid(row=5, columnspan=4)
+    
+    d_alert = tk.Label(d_win, text="")
+    d_alert.grid(row=6, columnspan=4)
+    
+    d_enter_but = Button(d_win, text='Delete Data', command=lambda: delete_in_db(d_alert))
+    d_enter_but.grid(row=7, columnspan=4)
+    
+    d_win.mainloop()
+    
 # Find current coordinate and Location
 latitude, longitude, address = get_curr_loc()
 
@@ -536,8 +768,8 @@ records = Menu(menu_bar)
 menu_bar.add_cascade(label='Records', menu=records)
 records.add_command(label ='Create Records', command = open_C_window)
 records.add_command(label ='Read Records', command = open_R_window)
-records.add_command(label ='Update Records', command = None)
-records.add_command(label ='Delete Records', command = None)
+records.add_command(label ='Update Records', command = open_U_window)
+records.add_command(label ='Delete Records', command = open_D_window)
 
 records.add_command(label ='Export Records', command = None)
 
