@@ -21,6 +21,8 @@ from openmeteo_sdk.Variable import Variable
 
 import sqlite3
 
+import csv
+
 # Global Variables
 openmeteo = openmeteo_requests.Client()
 
@@ -752,7 +754,14 @@ def open_D_window():
     d_enter_but.grid(row=7, columnspan=4)
     
     d_win.mainloop()
-    
+
+def export_db():
+    cursor.execute("SELECT * FROM Weather;")
+    with open("weather_data.csv", "w", newline='') as csv_file:
+        csv_w = csv.writer(csv_file)
+        csv_w.writerow([i[0] for i in cursor.description]) # write headers
+        csv_w.writerows(cursor)
+
 # Find current coordinate and Location
 latitude, longitude, address = get_curr_loc()
 
@@ -771,7 +780,7 @@ records.add_command(label ='Read Records', command = open_R_window)
 records.add_command(label ='Update Records', command = open_U_window)
 records.add_command(label ='Delete Records', command = open_D_window)
 
-records.add_command(label ='Export Records', command = None)
+records.add_command(label ='Export Records', command = export_db)
 
 info = Menu(menu_bar)
 menu_bar.add_command(label ="Info", command = info_msg)

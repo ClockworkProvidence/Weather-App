@@ -1,0 +1,13 @@
+Requires:
+tkinter
+tkcalendar
+datetime
+geocoder
+requests
+json
+openmeteo_requests
+openmeteo_sdk.Variable
+sqlite3
+csv
+
+all latest versions
