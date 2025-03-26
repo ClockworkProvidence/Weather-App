@@ -764,6 +764,7 @@ def export_db():
 
 # Find current coordinate and Location
 latitude, longitude, address = get_curr_loc()
+Curr_loc = address
 
 # Create the main window
 root = tk.Tk()
